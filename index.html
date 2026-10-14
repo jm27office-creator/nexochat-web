@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexoChat</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; background: #e5ddd5; }
+  button { cursor: pointer; }
+  .btn { background: #128c7e; color: #fff; border: 0; border-radius: 4px; padding: 10px; }
+
+  #auth { max-width: 340px; margin: 60px auto; background: #fff; padding: 20px; border-radius: 8px; }
+  #auth input, #auth button { width: 100%; padding: 10px; margin: 6px 0; }
+
+  #app { display: none; height: 100vh; }
+  #side { width: 320px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+  #top { background: #128c7e; color: #fff; padding: 12px; display: flex; justify-content: space-between; align-items: center; }
+  #top button { background: transparent; color: #fff; border: 1px solid #fff; border-radius: 4px; padding: 4px 8px; }
+  #searchBox { padding: 8px; display: flex; gap: 6px; border-bottom: 1px solid #eee; }
+  #searchBox input { flex: 1; padding: 8px; min-width: 0; }
+  #chatList { flex: 1; overflow-y: auto; }
+  .chatItem { padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+  .chatItem:hover, .chatItem.active { background: #f0f2f5; }
+  .chatItem b { display: block; }
+  .chatItem span { color: #666; font-size: 13px; }
+
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #head { background: #f0f2f5; padding: 14px; font-weight: bold; border-bottom: 1px solid #ddd; }
+  #msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .m { max-width: 70%; padding: 8px 10px; border-radius: 8px; background: #fff; word-wrap: break-word; }
+  .m.me { align-self: flex-end; background: #dcf8c6; }
+  .m small { display: block; color: #888; font-size: 11px; text-align: right; margin-top: 2px; }
+  #inputBar { display: flex; gap: 6px; padding: 10px; background: #f0f2f5; }
+  #inputBar input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 20px; min-width: 0; }
+  #empty { margin: auto; color: #666; }
+  #note { color: #c00; padding: 6px 10px; font-size: 13px; }
+#head { display: flex; align-items: center; }
+#backBtn { display: none; background: transparent; border: 0; font-size: 22px; margin-right: 8px; }
+@media (max-width: 700px) {
+  #app { height: 100dvh; }
+  #side { width: 100%; }
+  #main { display: none; width: 100%; }
+  #app.chatOpen #side { display: none; }
+  #app.chatOpen #main { display: flex; }
+  #backBtn { display: inline-block; }
+  .m { max-width: 85%; }
+}
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <h2>NexoChat</h2>
+  <input id="name" placeholder="Aap ka naam (sirf Sign Up ke liye)">
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password (letters + numbers, 6+)">
+<label style="display:block;margin:4px 0;font-size:14px"><input type="checkbox" id="showPass" style="width:auto;margin-right:6px">Password dikhayein</label>
+  <button class="btn" id="signup">Sign Up</button>
+  <button class="btn" id="login">Login</button>
+  <p id="msg" style="color:#c00"></p>
+</div>
+
+<div id="app">
+  <div id="side">
+    <div id="top"><span id="myname"></span><button id="logout">Logout</button></div>
+    <div id="searchBox">
+      <input id="searchEmail" type="email" placeholder="Email se dost dhoondein">
+      <button class="btn" id="searchBtn">Chat</button>
+    </div>
+    <div id="note"></div>
+    <div id="chatList"></div>
+  </div>
+  <div id="main">
+      <div id="head"><button id="backBtn">←</button><span id="headName">Chat chunein</span></div>
+  <div id="msgs"><div id="empty">Left se chat chunein ya email se naya dost dhoondein</div></div>
+    <div id="inputBar" style="display:none">
+      <input id="text" placeholder="Message likhein" maxlength="1000">
+      <button class="btn" id="send">Send</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, collection, query, where, orderBy, onSnapshot, serverTimestamp, getDocs }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAYVn-FzifpbX5rxwtpN199gxjQoiF0dLA",
+    authDomain: "nexochat-4e177.firebaseapp.com",
+    projectId: "nexochat-4e177",
+    storageBucket: "nexochat-4e177.firebasestorage.app",
+    messagingSenderId: "269007226683",
+    appId: "1:269007226683:web:00e9b7eefc731d1b39191e"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const $ = id => document.getElementById(id);
+
+  let me = null, myName = "", signingUp = false;
+  let unsubChats = null, unsubMsgs = null, currentChat = null;
+
+  const msg = t => $("msg").textContent = t || "";
+  const note = t => $("note").textContent = t || "";
+
+  async function saveProfile(user, name) {
+    await setDoc(doc(db, "users", user.uid),
+      { uid: user.uid, name: name, email: user.email.toLowerCase() }, { merge: true });
+  }
+
+  // ---------- Auth ----------
+$("showPass").onchange = () => { $("password").type = $("showPass").checked ? "text" : "password"; };
+  $("signup").onclick = async () => {
+    const name = $("name").value.trim();
+    if (!name) { msg("Pehle apna naam likhein"); return; }
+const p = $("password").value;
+if (p.length < 6 || !/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) { msg("Password mein kam az kam 6 characters, ek letter aur ek number hona chahiye"); return; }
+    signingUp = true;
+    try {
+      const c = await createUserWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
+      await updateProfile(c.user, { displayName: name });
+      await saveProfile(c.user, name);
+      myName = name;
+      $("myname").$("headName").textContent = name; $("app").classList.add("chatOpen");
+      msg("");
+    } catch (e) { msg(e.message); }
+    signingUp = false;
+  };
+
+  $("login").onclick = async () => {
+    try {
+      await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
+      msg("");
+    } catch (e) { msg(e.message); }
+  };
+
+  $("logout").onclick = () => signOut(auth);
+
+  onAuthStateChanged(auth, async user => {
+    if (user) {
+      me = user;
+      myName = user.displayName || user.email.split("@")[0];
+      $("myname").textContent = myName;
+      $("auth").style.display = "none";
+      $("app").style.display = "flex";
+      if (!signingUp) {
+        try { await saveProfile(user, myName); } catch (e) { note(e.message); }
+      }
+      loadChats();
+    } else {
+      me = null; currentChat = null;
+      if (unsubChats) unsubChats();
+      if (unsubMsgs) unsubMsgs();
+      $("app").style.display = "none";
+      $("auth").style.display = "block";
+      $("chatList").innerHTML = "";
+      resetChatPane();
+    }
+  });
+
+  // ---------- Chats list ----------
+  function loadChats() {
+    if (unsubChats) unsubChats();
+    const q = query(collection(db, "chats"), where("members", "array-contains", me.uid));
+    unsubChats = onSnapshot(q, snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) }));
+      list.sort((a, b) => (b.updatedAt?.toMillis() || 0) - (a.updatedAt?.toMillis() || 0));
+      const box = $("chatList");
+      box.innerHTML = "";
+      list.forEach(c => {
+        const other = c.members.find(m => m !== me.uid);
+        const name = (c.names && c.names[other]) || "User";
+        const div = document.createElement("div");
+        div.className = "chatItem" + (c.id === currentChat ? " active" : "");
+        const b = document.createElement("b"); b.textContent = name;
+        const s = document.createElement("span"); s.textContent = c.lastMessage || "Nayi chat";
+        div.append(b, s);
+        div.onclick = () => openChat(c.id, name);
+        box.appendChild(div);
+      });
+    }, e => note(e.message));
+  }
+
+  // ---------- Find user + start chat ----------
+  $("searchBtn").onclick = async () => {
+    note("");
+    const em = $("searchEmail").value.trim().toLowerCase();
+    if (!em) return;
+    if (em === me.email.toLowerCase()) { note("Ye aap ka apna email hai"); return; }
+    try {
+      const s = await getDocs(query(collection(db, "users"), where("email", "==", em)));
+      if (s.empty) { note("Is email ka koi user nahi mila"); return; }
+      const u = s.docs[0].data();
+      const id = [me.uid, u.uid].sort().join("_");
+      const ref = doc(db, "chats", id);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, {
+          members: [me.uid, u.uid],
+          names: { [me.uid]: myName, [u.uid]: u.name },
+          lastMessage: "",
+          updatedAt: serverTimestamp()
+        });
+      }
+      $("searchEmail").value = "";
+      openChat(id, u.name);
+    } catch (e) { note(e.message); }
+  };
+
+  // ---------- Open chat + messages ----------
+  function resetChatPane() {
+    $("head").$("headName").textContent = "Chat chunein"; $("app").classList.remove("chatOpen");
+    $("msgs").innerHTML = '<div id="empty">Left se chat chunein ya email se naya dost dhoondein</div>';
+    $("inputBar").style.display = "none";
+  }
+
+  function openChat(id, name) {
+    currentChat = id;
+    $("head").textContent = name;
+    $("inputBar").style.display = "flex";
+    if (unsubMsgs) unsubMsgs();
+    const q = query(collection(db, "chats", id, "messages"), orderBy("createdAt"));
+    unsubMsgs = onSnapshot(q, snap => {
+      const box = $("msgs");
+      box.innerHTML = "";
+      snap.docs.forEach(d => {
+        const m = d.data({ serverTimestamps: "estimate" });
+        const div = document.createElement("div");
+        div.className = "m" + (m.senderId === me.uid ? " me" : "");
+        div.textContent = m.text;
+        const t = document.createElement("small");
+        t.textContent = m.createdAt ? m.createdAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+        div.appendChild(t);
+        box.appendChild(div);
+      });
+      box.scrollTop = box.scrollHeight;
+    }, e => note(e.message));
+  }
+
+  async function send() {
+    const t = $("text").value.trim();
+    if (!t || !currentChat) return;
+    $("text").value = "";
+    try {
+      await addDoc(collection(db, "chats", currentChat, "messages"),
+        { senderId: me.uid, text: t, createdAt: serverTimestamp() });
+      await updateDoc(doc(db, "chats", currentChat),
+        { lastMessage: t, updatedAt: serverTimestamp() });
+    } catch (e) { note(e.message); }
+  }
+  $("send").onclick = send;
+$("backBtn").onclick = () => { $("app").classList.remove("chatOpen"); currentChat = null; };
+  $("text").onkeydown = e => { if (e.key === "Enter") send(); };
+</script>
+</body>
+</html>
